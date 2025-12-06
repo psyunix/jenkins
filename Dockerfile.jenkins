@@ -13,6 +13,19 @@ RUN apt-get update && \
 # Add jenkins user to docker group
 RUN usermod -aG docker jenkins
 
+# Create an entrypoint script to fix socket permissions on startup
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/bash
+# Fix Docker socket permissions if it exists
+if [ -S /var/run/docker.sock ]; then
+    chmod 666 /var/run/docker.sock 2>/dev/null || true
+fi
+# Run original Jenkins entrypoint
+exec /usr/local/bin/jenkins.sh "$@"
+EOF
+
+RUN chmod +x /entrypoint.sh
+
 # Switch back to jenkins user
 USER jenkins
 
@@ -22,3 +35,6 @@ EXPOSE 50000
 
 # Jenkins home directory
 VOLUME /var/jenkins_home
+
+# Use custom entrypoint to fix socket permissions
+ENTRYPOINT ["/entrypoint.sh"]
