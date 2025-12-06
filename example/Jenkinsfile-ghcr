@@ -1,0 +1,92 @@
+pipeline {
+    agent any
+    
+    environment {
+        GHCR_REGISTRY = 'ghcr.io'
+        GHCR_REPO = 'psyunix/jenkins'
+        IMAGE_NAME = 'webserver'
+        DOCKER_CREDENTIALS = 'github-packages'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/psyunix/jenkins.git'
+            }
+        }
+        
+        stage('Build Image') {
+            steps {
+                script {
+                    echo 'Building Web Server Docker image...'
+                    sh 'docker build -f Dockerfile.webserver -t ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:latest .'
+                }
+            }
+        }
+        
+        stage('Test Image') {
+            steps {
+                script {
+                    echo 'Testing if software is installed...'
+                    sh '''
+                        docker run --rm ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:latest which vim
+                        docker run --rm ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:latest which mc
+                        docker run --rm ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:latest curl --version
+                    '''
+                }
+            }
+        }
+        
+        stage('Login to GHCR') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS,
+                        usernameVariable: 'USERNAME',
+                        passwordVariable: 'PASSWORD'
+                    )]) {
+                        sh 'echo $PASSWORD | docker login ${GHCR_REGISTRY} -u $USERNAME --password-stdin'
+                    }
+                }
+            }
+        }
+        
+        stage('Push to GHCR') {
+            steps {
+                script {
+                    echo 'Pushing image to GitHub Container Registry...'
+                    sh 'docker push ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:latest'
+                    
+                    // Tag with build number
+                    sh """
+                        docker tag ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:latest \
+                                   ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:build-${BUILD_NUMBER}
+                        docker push ${GHCR_REGISTRY}/${GHCR_REPO}/${IMAGE_NAME}:build-${BUILD_NUMBER}
+                    """
+                }
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                script {
+                    echo 'Cleaning up local images...'
+                    sh 'docker logout ${GHCR_REGISTRY}'
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ Image built and pushed successfully!'
+        }
+        failure {
+            echo '❌ Build failed!'
+        }
+        always {
+            echo 'Cleaning up...'
+            sh 'docker system prune -f'
+        }
+    }
+}
